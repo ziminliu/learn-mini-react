@@ -5,13 +5,13 @@
     <title>Hello React!</title>
     <script
       type="text/javascript"
-      src="./react18/react.development.js"
+      src="./react18.0.0/react.development.js"
     ></script>
     <script
       type="text/javascript"
-      src="./react18/react-dom.development.js"
+      src="./react18.0.0/react-dom.development.js"
     ></script>
-    <script type="text/javascript" src="./react18/babel.js"></script>
+    <script type="text/javascript" src="./babel.js"></script>
   </head>
 
   <body>
@@ -19,19 +19,87 @@
   </body>
 
   <script type="text/babel">
-    const App = () => {
-      const [clickTimes, setClickTimes] = React.useState(0);
-      return (
-        <div>
-          <h1> {clickTimes}</h1>
-          <button onClick={() => setClickTimes(clickTimes + 1)}>+1</button>
-        </div>
-      );
-    };
+    // const App = () => {
+    //   const [clickTimes, setClickTimes] = React.useState(0);
+    //   const handleClick = () => {
+    //     // ReactDOM.flushSync(() => {
+    //     //   setClickTimes(clickTimes + 1);
+    //     // });
+    //     setTimeout(() => {
+    //       setClickTimes((clickTimes) => clickTimes + 1);
+    //     });
+    //     console.log(clickTimes, "clickTimes");
+    //   };
+    //   return (
+    //     <div>
+    //       <h1> {clickTimes}</h1>
+    //       <button onClick={handleClick}>+1</button>
+    //     </div>
+    //   );
+    // };
+    console.log("react version", React.version);
+    class SetStatePage extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = {
+          count: 0,
+        };
+      }
+      componentDidMount() {
+        document.getElementById("host").addEventListener(
+          "click",
+          //// 即react-reconciler/src/ReactFiberWorkLoop.js batchedUpdates
+          // //() => ReactDOM.unstable_batchedUpdates(this.changeCount),
+          this.changeCount,
+          false
+        );
+      }
+
+      changeCount = () => {
+        const { count } = this.state;
+
+        // ReactDOM.flushSync(() => {
+        this.setState({
+          count: count + 1,
+        });
+        // });
+
+        // this.setState({
+        //   count: count + 2,
+        // });
+
+        console.log("改变count", this.state); //sy-log
+      };
+
+      changeCountWithSetTimeout = () => {
+        setTimeout(() => {
+          this.changeCount(); // setState
+        }, 0);
+      };
+
+      render() {
+        console.log("render"); //sy-log
+        const { count } = this.state;
+        return (
+          <div>
+            <h3>SetStatePage</h3>
+            <p>count: {count}</p>
+            <button onClick={this.changeCount}>change count 合成事件</button>
+
+            <button onClick={this.changeCountWithSetTimeout}>
+              合成事件 setTimeout click
+            </button>
+
+            <button id="host">原生事件</button>
+          </div>
+        );
+      }
+    }
     const container = document.getElementById("root");
-    debugger;
-    const root = ReactDOM.createRoot(container); // createRoot(container!) if you use TypeScript
-    root.render(<App />);
-    // ReactDOM.render(<App />, container);
+    // debugger;
+    // console.log(React.createElement(App, null), "app");
+    // const root = ReactDOM.createRoot(container); // createRoot(container!) if you use TypeScript
+    // root.render(<App />);
+    ReactDOM.render(<SetStatePage />, container);
   </script>
 </html>

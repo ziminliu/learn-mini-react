@@ -12,6 +12,7 @@
   typeof define === 'function' && define.amd ? define(['exports', 'react'], factory) :
   (global = global || self, factory(global.ReactDOM = {}, global.React));
 }(this, (function (exports, React) { 'use strict';
+
   var ReactSharedInternals = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
 
   var suppressWarning = false;
@@ -126,7 +127,7 @@
   // element's object properties instead of only HTML attributes.
   // https://github.com/facebook/react/issues/11347
 
-  var enableCustomElementPropertySupport = false; // Disables children for <textarea> elements
+  var enableCustomElementPropertySupport = true; // Disables children for <textarea> elements
   var warnAboutStringRefs = false; // -----------------------------------------------------------------------------
   // Debugging and DevTools
   // -----------------------------------------------------------------------------
@@ -458,6 +459,10 @@
   // defaultValue property -- do we need this?
   'defaultValue', 'defaultChecked', 'innerHTML', 'suppressContentEditableWarning', 'suppressHydrationWarning', 'style'];
 
+  {
+    reservedProps.push('innerText', 'textContent');
+  }
+
   reservedProps.forEach(function (name) {
     properties[name] = new PropertyInfoRecord(name, RESERVED, false, // mustUseProperty
     name, // attributeName
@@ -763,6 +768,39 @@
       return;
     }
 
+    if ( isCustomComponentTag && name[0] === 'o' && name[1] === 'n') {
+      var eventName = name.replace(/Capture$/, '');
+      var useCapture = name !== eventName;
+      eventName = eventName.slice(2);
+      var prevProps = getFiberCurrentPropsFromNode(node);
+      var prevValue = prevProps != null ? prevProps[name] : null;
+
+      if (typeof prevValue === 'function') {
+        node.removeEventListener(eventName, prevValue, useCapture);
+      }
+
+      if (typeof value === 'function') {
+        if (typeof prevValue !== 'function' && prevValue !== null) {
+          // If we previously assigned a non-function type into this node, then
+          // remove it when switching to event listener mode.
+          if (name in node) {
+            node[name] = null;
+          } else if (node.hasAttribute(name)) {
+            node.removeAttribute(name);
+          }
+        } // $FlowFixMe value can't be casted to EventListener.
+
+
+        node.addEventListener(eventName, value, useCapture);
+        return;
+      }
+    }
+
+    if ( isCustomComponentTag && name in node) {
+      node[name] = value;
+      return;
+    }
+
     if (shouldRemoveAttribute(name, value, propertyInfo, isCustomComponentTag)) {
       value = null;
     } // If the prop isn't in the special list, treat it as a simple attribute.
@@ -852,6 +890,7 @@
   var REACT_PROFILER_TYPE = Symbol.for('react.profiler');
   var REACT_PROVIDER_TYPE = Symbol.for('react.provider');
   var REACT_CONTEXT_TYPE = Symbol.for('react.context');
+  var REACT_SERVER_CONTEXT_TYPE = Symbol.for('react.server_context');
   var REACT_FORWARD_REF_TYPE = Symbol.for('react.forward_ref');
   var REACT_SUSPENSE_TYPE = Symbol.for('react.suspense');
   var REACT_SUSPENSE_LIST_TYPE = Symbol.for('react.suspense_list');
@@ -863,6 +902,7 @@
   var REACT_LEGACY_HIDDEN_TYPE = Symbol.for('react.legacy_hidden');
   var REACT_CACHE_TYPE = Symbol.for('react.cache');
   var REACT_TRACING_MARKER_TYPE = Symbol.for('react.tracing_marker');
+  var REACT_SERVER_CONTEXT_DEFAULT_VALUE_NOT_LOADED = Symbol.for('react.default_value');
   var MAYBE_ITERATOR_SYMBOL = Symbol.iterator;
   var FAUX_ITERATOR_SYMBOL = '@@iterator';
   function getIteratorFn(maybeIterable) {
@@ -1332,6 +1372,11 @@
       case REACT_SUSPENSE_LIST_TYPE:
         return 'SuspenseList';
 
+      case REACT_CACHE_TYPE:
+        {
+          return 'Cache';
+        }
+
     }
 
     if (typeof type === 'object') {
@@ -1367,6 +1412,12 @@
             } catch (x) {
               return null;
             }
+          }
+
+        case REACT_SERVER_CONTEXT_TYPE:
+          {
+            var context2 = type;
+            return (context2.displayName || context2._globalName) + '.Provider';
           }
 
         // eslint-disable-next-line no-fallthrough
@@ -7954,6 +8005,8 @@
       }
     } else if (shouldUseClickEvent(targetNode)) {
       getTargetInstFunc = getTargetInstForClickEvent;
+    } else if ( targetInst && isCustomComponent(targetInst.elementType, targetInst.memoizedProps)) {
+      getTargetInstFunc = getTargetInstForChangeEvent;
     }
 
     if (getTargetInstFunc) {
@@ -10343,6 +10396,13 @@
               warnForPropDifference(propKey, serverValue, expectedStyle);
             }
           }
+        } else if ( isCustomComponentTag && (propKey === 'offsetParent' || propKey === 'offsetTop' || propKey === 'offsetLeft' || propKey === 'offsetWidth' || propKey === 'offsetHeight' || propKey === 'isContentEditable' || propKey === 'outerText' || propKey === 'outerHTML')) {
+          // $FlowFixMe - Should be inferred as not undefined.
+          extraAttributeNames.delete(propKey.toLowerCase());
+
+          {
+            error('Assignment to read-only property will result in a no-op: `%s`', propKey);
+          }
         } else if (isCustomComponentTag && !enableCustomElementPropertySupport) {
           // $FlowFixMe - Should be inferred as not undefined.
           extraAttributeNames.delete(propKey.toLowerCase());
@@ -10389,7 +10449,7 @@
             serverValue = getValueForAttribute(domElement, propKey, nextProp);
           }
 
-          var dontWarnCustomElement = enableCustomElementPropertySupport  ;
+          var dontWarnCustomElement =  isCustomComponentTag && (typeof nextProp === 'function' || typeof nextProp === 'object');
 
           if (!dontWarnCustomElement && nextProp !== serverValue && !isMismatchDueToBadCasing) {
             warnForPropDifference(propKey, serverValue, nextProp);
@@ -12327,7 +12387,9 @@
     pop(valueCursor, providerFiber);
 
     {
-      {
+      if ( currentValue === REACT_SERVER_CONTEXT_DEFAULT_VALUE_NOT_LOADED) {
+        context._currentValue = context._defaultValue;
+      } else {
         context._currentValue = currentValue;
       }
     }
@@ -15952,6 +16014,76 @@
     }
   }
 
+  // Intentionally not named imports because Rollup would
+  // use dynamic dispatch for CommonJS interop named imports.
+  var scheduleCallback$1 = unstable_scheduleCallback,
+      NormalPriority$1 = unstable_NormalPriority;
+  var CacheContext =  {
+    $$typeof: REACT_CONTEXT_TYPE,
+    // We don't use Consumer/Provider for Cache components. So we'll cheat.
+    Consumer: null,
+    Provider: null,
+    // We'll initialize these at the root.
+    _currentValue: null,
+    _currentValue2: null,
+    _threadCount: 0,
+    _defaultValue: null,
+    _globalName: null
+  } ;
+
+  {
+    CacheContext._currentRenderer = null;
+    CacheContext._currentRenderer2 = null;
+  } // Creates a new empty Cache instance with a ref-count of 0. The caller is responsible
+  // for retaining the cache once it is in use (retainCache), and releasing the cache
+  // once it is no longer needed (releaseCache).
+
+
+  function createCache() {
+
+    var cache = {
+      controller: new AbortController(),
+      data: new Map(),
+      refCount: 0
+    };
+    return cache;
+  }
+  function retainCache(cache) {
+
+    {
+      if (cache.controller.signal.aborted) {
+        warn('A cache instance was retained after it was already freed. ' + 'This likely indicates a bug in React.');
+      }
+    }
+
+    cache.refCount++;
+  } // Cleanup a cache instance, potentially freeing it if there are no more references
+
+  function releaseCache(cache) {
+
+    cache.refCount--;
+
+    {
+      if (cache.refCount < 0) {
+        warn('A cache instance was released after it was already freed. ' + 'This likely indicates a bug in React.');
+      }
+    }
+
+    if (cache.refCount === 0) {
+      scheduleCallback$1(NormalPriority$1, function () {
+        cache.controller.abort();
+      });
+    }
+  }
+  function pushCacheProvider(workInProgress, cache) {
+
+    pushProvider(workInProgress, CacheContext, cache);
+  }
+  function popCacheProvider(workInProgress, cache) {
+
+    popProvider(CacheContext, workInProgress);
+  }
+
   var ReactCurrentDispatcher$1 = ReactSharedInternals.ReactCurrentDispatcher,
       ReactCurrentBatchConfig$2 = ReactSharedInternals.ReactCurrentBatchConfig;
   var didWarnAboutMismatchedHooksForComponent;
@@ -16143,7 +16275,6 @@
         // This dispatcher does that.
         ReactCurrentDispatcher$1.current = HooksDispatcherOnMountWithHookTypesInDEV;
       } else {
-        // readonly dispatcher -> zhen
         ReactCurrentDispatcher$1.current = HooksDispatcherOnMountInDEV;
       }
     }
@@ -17255,6 +17386,64 @@
     return id;
   }
 
+  function mountRefresh() {
+    var hook = mountWorkInProgressHook();
+    var refresh = hook.memoizedState = refreshCache.bind(null, currentlyRenderingFiber$1);
+    return refresh;
+  }
+
+  function updateRefresh() {
+    var hook = updateWorkInProgressHook();
+    return hook.memoizedState;
+  }
+
+  function refreshCache(fiber, seedKey, seedValue) {
+    // TODO: Consider warning if the refresh is at discrete priority, or if we
+    // otherwise suspect that it wasn't batched properly.
+
+
+    var provider = fiber.return;
+
+    while (provider !== null) {
+      switch (provider.tag) {
+        case CacheComponent:
+        case HostRoot:
+          {
+            var lane = requestUpdateLane(provider);
+            var eventTime = requestEventTime();
+            var root = scheduleUpdateOnFiber(provider, lane, eventTime);
+
+            if (root !== null) {
+              entangleTransitions(root, provider, lane);
+            } // TODO: If a refresh never commits, the new cache created here must be
+            // released. A simple case is start refreshing a cache boundary, but then
+            // unmount that boundary before the refresh completes.
+
+
+            var seededCache = createCache();
+
+            if (seedKey !== null && seedKey !== undefined && root !== null) {
+              // Seed the cache with the value passed by the caller. This could be
+              // from a server mutation, or it could be a streaming response.
+              seededCache.data.set(seedKey, seedValue);
+            } // Schedule an update on the cache boundary to trigger a refresh.
+
+
+            var refreshUpdate = createUpdate(eventTime, lane);
+            var payload = {
+              cache: seededCache
+            };
+            refreshUpdate.payload = payload;
+            enqueueUpdate(provider, refreshUpdate);
+            return;
+          }
+      }
+
+      provider = provider.return;
+    } // TODO: Warn if unmounted?
+
+  }
+
   function dispatchReducerAction(fiber, queue, action) {
     {
       if (typeof arguments[3] === 'function') {
@@ -17439,6 +17628,25 @@
     }
   }
 
+  function getCacheSignal() {
+
+    var cache = readContext(CacheContext);
+    return cache.controller.signal;
+  }
+
+  function getCacheForType(resourceType) {
+
+    var cache = readContext(CacheContext);
+    var cacheForType = cache.data.get(resourceType);
+
+    if (cacheForType === undefined) {
+      cacheForType = resourceType();
+      cache.data.set(resourceType, cacheForType);
+    }
+
+    return cacheForType;
+  }
+
   var ContextOnlyDispatcher = {
     readContext: readContext,
     useCallback: throwInvalidHookError,
@@ -17459,6 +17667,12 @@
     useId: throwInvalidHookError,
     unstable_isNewReconciler: enableNewReconciler
   };
+
+  {
+    ContextOnlyDispatcher.getCacheSignal = getCacheSignal;
+    ContextOnlyDispatcher.getCacheForType = getCacheForType;
+    ContextOnlyDispatcher.useCacheRefresh = throwInvalidHookError;
+  }
 
   var HooksDispatcherOnMountInDEV = null;
   var HooksDispatcherOnMountWithHookTypesInDEV = null;
@@ -17591,6 +17805,17 @@
       unstable_isNewReconciler: enableNewReconciler
     };
 
+    {
+      HooksDispatcherOnMountInDEV.getCacheSignal = getCacheSignal;
+      HooksDispatcherOnMountInDEV.getCacheForType = getCacheForType;
+
+      HooksDispatcherOnMountInDEV.useCacheRefresh = function useCacheRefresh() {
+        currentHookNameInDev = 'useCacheRefresh';
+        mountHookTypesDev();
+        return mountRefresh();
+      };
+    }
+
     HooksDispatcherOnMountWithHookTypesInDEV = {
       readContext: function (context) {
         return readContext(context);
@@ -17698,6 +17923,17 @@
       },
       unstable_isNewReconciler: enableNewReconciler
     };
+
+    {
+      HooksDispatcherOnMountWithHookTypesInDEV.getCacheSignal = getCacheSignal;
+      HooksDispatcherOnMountWithHookTypesInDEV.getCacheForType = getCacheForType;
+
+      HooksDispatcherOnMountWithHookTypesInDEV.useCacheRefresh = function useCacheRefresh() {
+        currentHookNameInDev = 'useCacheRefresh';
+        updateHookTypesDev();
+        return mountRefresh();
+      };
+    }
 
     HooksDispatcherOnUpdateInDEV = {
       readContext: function (context) {
@@ -17807,6 +18043,17 @@
       unstable_isNewReconciler: enableNewReconciler
     };
 
+    {
+      HooksDispatcherOnUpdateInDEV.getCacheSignal = getCacheSignal;
+      HooksDispatcherOnUpdateInDEV.getCacheForType = getCacheForType;
+
+      HooksDispatcherOnUpdateInDEV.useCacheRefresh = function useCacheRefresh() {
+        currentHookNameInDev = 'useCacheRefresh';
+        updateHookTypesDev();
+        return updateRefresh();
+      };
+    }
+
     HooksDispatcherOnRerenderInDEV = {
       readContext: function (context) {
         return readContext(context);
@@ -17914,6 +18161,17 @@
       },
       unstable_isNewReconciler: enableNewReconciler
     };
+
+    {
+      HooksDispatcherOnRerenderInDEV.getCacheSignal = getCacheSignal;
+      HooksDispatcherOnRerenderInDEV.getCacheForType = getCacheForType;
+
+      HooksDispatcherOnRerenderInDEV.useCacheRefresh = function useCacheRefresh() {
+        currentHookNameInDev = 'useCacheRefresh';
+        updateHookTypesDev();
+        return updateRefresh();
+      };
+    }
 
     InvalidNestedHooksDispatcherOnMountInDEV = {
       readContext: function (context) {
@@ -18040,6 +18298,17 @@
       unstable_isNewReconciler: enableNewReconciler
     };
 
+    {
+      InvalidNestedHooksDispatcherOnMountInDEV.getCacheSignal = getCacheSignal;
+      InvalidNestedHooksDispatcherOnMountInDEV.getCacheForType = getCacheForType;
+
+      InvalidNestedHooksDispatcherOnMountInDEV.useCacheRefresh = function useCacheRefresh() {
+        currentHookNameInDev = 'useCacheRefresh';
+        mountHookTypesDev();
+        return mountRefresh();
+      };
+    }
+
     InvalidNestedHooksDispatcherOnUpdateInDEV = {
       readContext: function (context) {
         warnInvalidContextAccess();
@@ -18165,6 +18434,17 @@
       unstable_isNewReconciler: enableNewReconciler
     };
 
+    {
+      InvalidNestedHooksDispatcherOnUpdateInDEV.getCacheSignal = getCacheSignal;
+      InvalidNestedHooksDispatcherOnUpdateInDEV.getCacheForType = getCacheForType;
+
+      InvalidNestedHooksDispatcherOnUpdateInDEV.useCacheRefresh = function useCacheRefresh() {
+        currentHookNameInDev = 'useCacheRefresh';
+        updateHookTypesDev();
+        return updateRefresh();
+      };
+    }
+
     InvalidNestedHooksDispatcherOnRerenderInDEV = {
       readContext: function (context) {
         warnInvalidContextAccess();
@@ -18289,6 +18569,17 @@
       },
       unstable_isNewReconciler: enableNewReconciler
     };
+
+    {
+      InvalidNestedHooksDispatcherOnRerenderInDEV.getCacheSignal = getCacheSignal;
+      InvalidNestedHooksDispatcherOnRerenderInDEV.getCacheForType = getCacheForType;
+
+      InvalidNestedHooksDispatcherOnRerenderInDEV.useCacheRefresh = function useCacheRefresh() {
+        currentHookNameInDev = 'useCacheRefresh';
+        updateHookTypesDev();
+        return updateRefresh();
+      };
+    }
   }
 
   var now$1 = unstable_now;
@@ -18972,10 +19263,104 @@
     } while (workInProgress !== null);
   }
 
-  function getSuspendedCache() {
+  // used during the previous render by placing it here, on the stack.
+
+  var resumedCache = createCursor(null);
+
+  function peekCacheFromPool() {
+    // If we're rendering inside a Suspense boundary that is currently hidden,
+    // we should use the same cache that we used during the previous render, if
+    // one exists.
+
+
+    var cacheResumedFromPreviousRender = resumedCache.current;
+
+    if (cacheResumedFromPreviousRender !== null) {
+      return cacheResumedFromPreviousRender;
+    } // Otherwise, check the root's cache pool.
+
+
+    var root = getWorkInProgressRoot();
+    var cacheFromRootCachePool = root.pooledCache;
+    return cacheFromRootCachePool;
+  }
+
+  function requestCacheFromPool(renderLanes) {
+    // Similar to previous function, except if there's not already a cache in the
+    // pool, we allocate a new one.
+    var cacheFromPool = peekCacheFromPool();
+
+    if (cacheFromPool !== null) {
+      return cacheFromPool;
+    } // Create a fresh cache and add it to the root cache pool. A cache can have
+    // multiple owners:
+    // - A cache pool that lives on the FiberRoot. This is where all fresh caches
+    //   are originally created (TODO: except during refreshes, until we implement
+    //   this correctly). The root takes ownership immediately when the cache is
+    //   created. Conceptually, root.pooledCache is an Option<Arc<Cache>> (owned),
+    //   and the return value of this function is a &Arc<Cache> (borrowed).
+    // - One of several fiber types: host root, cache boundary, suspense
+    //   component. These retain and release in the commit phase.
+
+
+    var root = getWorkInProgressRoot();
+    var freshCache = createCache();
+    root.pooledCache = freshCache;
+    retainCache(freshCache);
+
+    if (freshCache !== null) {
+      root.pooledCacheLanes |= renderLanes;
+    }
+
+    return freshCache;
+  }
+  function pushTransition(offscreenWorkInProgress, prevCachePool) {
     {
+      if (prevCachePool === null) {
+        push(resumedCache, resumedCache.current, offscreenWorkInProgress);
+      } else {
+        push(resumedCache, prevCachePool.pool, offscreenWorkInProgress);
+      }
+    }
+  }
+  function popTransition(workInProgress) {
+    {
+      pop(resumedCache, workInProgress);
+    }
+  }
+  function getSuspendedCache() {
+    // cache that would have been used to render fresh data during this render,
+    // if there was any, so that we can resume rendering with the same cache when
+    // we receive more data.
+
+
+    var cacheFromPool = peekCacheFromPool();
+
+    if (cacheFromPool === null) {
       return null;
-    } // This function is called when a Suspense boundary suspends. It returns the
+    }
+
+    return {
+      // We must also save the parent, so that when we resume we can detect
+      // a refresh.
+      parent:  CacheContext._currentValue ,
+      pool: cacheFromPool
+    };
+  }
+  function getOffscreenDeferredCache() {
+
+    var cacheFromPool = peekCacheFromPool();
+
+    if (cacheFromPool === null) {
+      return null;
+    }
+
+    return {
+      // We must also store the parent, so that when we resume we can detect
+      // a refresh.
+      parent:  CacheContext._currentValue ,
+      pool: cacheFromPool
+    };
   }
 
   function markUpdate(workInProgress) {
@@ -19284,6 +19669,23 @@
         {
           var fiberRoot = workInProgress.stateNode;
 
+          {
+            var previousCache = null;
+
+            if (current !== null) {
+              previousCache = current.memoizedState.cache;
+            }
+
+            var cache = workInProgress.memoizedState.cache;
+
+            if (cache !== previousCache) {
+              // Run passive effects to retain/release the cache.
+              workInProgress.flags |= Passive;
+            }
+
+            popCacheProvider(workInProgress);
+          }
+
           popHostContainer(workInProgress);
           popTopLevelContextObject(workInProgress);
           resetWorkInProgressVersions();
@@ -19535,6 +19937,26 @@
             var _prevState = current.memoizedState;
             prevDidTimeout = _prevState !== null;
           }
+
+          if ( nextDidTimeout) {
+            var offscreenFiber = workInProgress.child;
+            var _previousCache = null;
+
+            if (offscreenFiber.alternate !== null && offscreenFiber.alternate.memoizedState !== null && offscreenFiber.alternate.memoizedState.cachePool !== null) {
+              _previousCache = offscreenFiber.alternate.memoizedState.cachePool.pool;
+            }
+
+            var _cache = null;
+
+            if (offscreenFiber.memoizedState !== null && offscreenFiber.memoizedState.cachePool !== null) {
+              _cache = offscreenFiber.memoizedState.cachePool.pool;
+            }
+
+            if (_cache !== _previousCache) {
+              // Run passive effects to retain/release the cache.
+              offscreenFiber.flags |= Passive;
+            }
+          } // If the suspended state of the boundary changes, we need to schedule
           // an effect to toggle the subtree's visibility. When we switch from
           // fallback -> primary, the inner Offscreen fiber schedules this effect
           // as part of its normal complete phase. But when we switch from
@@ -19869,11 +20291,51 @@
             }
           }
 
+          {
+            var _previousCache2 = null;
+
+            if (current !== null && current.memoizedState !== null && current.memoizedState.cachePool !== null) {
+              _previousCache2 = current.memoizedState.cachePool.pool;
+            }
+
+            var _cache2 = null;
+
+            if (workInProgress.memoizedState !== null && workInProgress.memoizedState.cachePool !== null) {
+              _cache2 = workInProgress.memoizedState.cachePool.pool;
+            }
+
+            if (_cache2 !== _previousCache2) {
+              // Run passive effects to retain/release the cache.
+              workInProgress.flags |= Passive;
+            }
+
+            if (current !== null) {
+              popTransition(workInProgress);
+            }
+          }
+
           return null;
         }
 
       case CacheComponent:
         {
+          {
+            var _previousCache3 = null;
+
+            if (current !== null) {
+              _previousCache3 = current.memoizedState.cache;
+            }
+
+            var _cache3 = workInProgress.memoizedState.cache;
+
+            if (_cache3 !== _previousCache3) {
+              // Run passive effects to retain/release the cache.
+              workInProgress.flags |= Passive;
+            }
+
+            popCacheProvider(workInProgress);
+            bubbleProperties(workInProgress);
+          }
 
           return null;
         }
@@ -20176,6 +20638,14 @@
         };
         workInProgress.memoizedState = nextState;
 
+        {
+          // push the cache pool even though we're going to bail out
+          // because otherwise there'd be a context mismatch
+          if (current !== null) {
+            pushTransition(workInProgress, null);
+          }
+        }
+
         pushRenderLanes(workInProgress, renderLanes);
       } else if (!includesSomeLane(renderLanes, OffscreenLane)) {
         var spawnedCachePool = null; // We're hidden, and we're not rendering at Offscreen. We will bail out
@@ -20186,6 +20656,11 @@
         if (prevState !== null) {
           var prevBaseLanes = prevState.baseLanes;
           nextBaseLanes = mergeLanes(prevBaseLanes, renderLanes);
+
+          {
+            // Save the cache pool so we can resume later.
+            spawnedCachePool = getOffscreenDeferredCache();
+          }
         } else {
           nextBaseLanes = renderLanes;
         } // Schedule this fiber to re-render at offscreen priority. Then bailout.
@@ -20198,6 +20673,14 @@
         };
         workInProgress.memoizedState = _nextState;
         workInProgress.updateQueue = null;
+
+        {
+          // push the cache pool even though we're going to bail out
+          // because otherwise there'd be a context mismatch
+          if (current !== null) {
+            pushTransition(workInProgress, null);
+          }
+        } // We're about to bail out, but we need to push this to the stack anyway
         // to avoid a push/pop misalignment.
 
 
@@ -20216,6 +20699,14 @@
 
         var subtreeRenderLanes = prevState !== null ? prevState.baseLanes : renderLanes;
 
+        if ( current !== null) {
+          // If the render that spawned this one accessed the cache pool, resume
+          // using the same cache. Unless the parent changed, since that means
+          // there was a refresh.
+          var prevCachePool = prevState !== null ? prevState.cachePool : null;
+          pushTransition(workInProgress, prevCachePool);
+        }
+
         pushRenderLanes(workInProgress, subtreeRenderLanes);
       }
     } else {
@@ -20226,6 +20717,14 @@
         // We're going from hidden -> visible.
         _subtreeRenderLanes = mergeLanes(prevState.baseLanes, renderLanes);
 
+        {
+          // If the render that spawned this one accessed the cache pool, resume
+          // using the same cache. Unless the parent changed, since that means
+          // there was a refresh.
+          var _prevCachePool = prevState.cachePool;
+          pushTransition(workInProgress, _prevCachePool);
+        } // Since we're not hidden anymore, reset the state
+
 
         workInProgress.memoizedState = null;
       } else {
@@ -20233,6 +20732,15 @@
         // special to do. Need to push to the stack regardless, though, to avoid
         // a push/pop misalignment.
         _subtreeRenderLanes = renderLanes;
+
+        {
+          // If the render that spawned this one accessed the cache pool, resume
+          // using the same cache. Unless the parent changed, since that means
+          // there was a refresh.
+          if (current !== null) {
+            pushTransition(workInProgress, null);
+          }
+        }
       }
 
       pushRenderLanes(workInProgress, _subtreeRenderLanes);
@@ -20243,6 +20751,66 @@
       return workInProgress.child;
     }
   }
+
+  function updateCacheComponent(current, workInProgress, renderLanes) {
+
+    prepareToReadContext(workInProgress, renderLanes);
+    var parentCache = readContext(CacheContext);
+
+    if (current === null) {
+      // Initial mount. Request a fresh cache from the pool.
+      var freshCache = requestCacheFromPool(renderLanes);
+      var initialState = {
+        parent: parentCache,
+        cache: freshCache
+      };
+      workInProgress.memoizedState = initialState;
+      initializeUpdateQueue(workInProgress);
+      pushCacheProvider(workInProgress, freshCache);
+    } else {
+      // Check for updates
+      if (includesSomeLane(current.lanes, renderLanes)) {
+        cloneUpdateQueue(current, workInProgress);
+        processUpdateQueue(workInProgress, null, null, renderLanes);
+      }
+
+      var prevState = current.memoizedState;
+      var nextState = workInProgress.memoizedState; // Compare the new parent cache to the previous to see detect there was
+      // a refresh.
+
+      if (prevState.parent !== parentCache) {
+        // Refresh in parent. Update the parent.
+        var derivedState = {
+          parent: parentCache,
+          cache: parentCache
+        }; // Copied from getDerivedStateFromProps implementation. Once the update
+        // queue is empty, persist the derived state onto the base state.
+
+        workInProgress.memoizedState = derivedState;
+
+        if (workInProgress.lanes === NoLanes) {
+          var updateQueue = workInProgress.updateQueue;
+          workInProgress.memoizedState = updateQueue.baseState = derivedState;
+        }
+
+        pushCacheProvider(workInProgress, parentCache); // No need to propagate a context change because the refreshed parent
+        // already did.
+      } else {
+        // The parent didn't refresh. Now check if this cache did.
+        var nextCache = nextState.cache;
+        pushCacheProvider(workInProgress, nextCache);
+
+        if (nextCache !== prevState.cache) {
+          // This cache refreshed. Propagate a context change.
+          propagateContextChange(workInProgress, CacheContext, renderLanes);
+        }
+      }
+    }
+
+    var nextChildren = workInProgress.pendingProps.children;
+    reconcileChildren(current, workInProgress, nextChildren, renderLanes);
+    return workInProgress.child;
+  } // This should only be called if the name changes
 
   function updateFragment(current, workInProgress, renderLanes) {
     var nextChildren = workInProgress.pendingProps;
@@ -20565,6 +21133,16 @@
     processUpdateQueue(workInProgress, nextProps, null, renderLanes);
     var nextState = workInProgress.memoizedState;
     var root = workInProgress.stateNode;
+
+    {
+      var nextCache = nextState.cache;
+      pushCacheProvider(workInProgress, nextCache);
+
+      if (nextCache !== prevState.cache) {
+        // The root cache refreshed.
+        propagateContextChange(workInProgress, CacheContext, renderLanes);
+      }
+    }
     // being called "element".
 
 
@@ -21006,6 +21584,30 @@
   function updateSuspenseOffscreenState(prevOffscreenState, renderLanes) {
     var cachePool = null;
 
+    {
+      var prevCachePool = prevOffscreenState.cachePool;
+
+      if (prevCachePool !== null) {
+        var parentCache =  CacheContext._currentValue ;
+
+        if (prevCachePool.parent !== parentCache) {
+          // Detected a refresh in the parent. This overrides any previously
+          // suspended cache.
+          cachePool = {
+            parent: parentCache,
+            pool: parentCache
+          };
+        } else {
+          // We can reuse the cache from last time. The only thing that would have
+          // overridden it is a parent refresh, which we checked for above.
+          cachePool = prevCachePool;
+        }
+      } else {
+        // If there's no previous cache pool, grab the current one.
+        cachePool = getSuspendedCache();
+      }
+    }
+
     return {
       baseLanes: mergeLanes(prevOffscreenState.baseLanes, renderLanes),
       cachePool: cachePool
@@ -21119,6 +21721,25 @@
         primaryChildFragment.memoizedState = mountSuspenseOffscreenState(renderLanes);
         workInProgress.memoizedState = SUSPENDED_MARKER;
         return fallbackFragment;
+      } else if ( typeof nextProps.unstable_expectedLoadTime === 'number') {
+        // This is a CPU-bound tree. Skip this tree and show a placeholder to
+        // unblock the surrounding content. Then immediately retry after the
+        // initial commit.
+        var _fallbackFragment = mountSuspenseFallbackChildren(workInProgress, nextPrimaryChildren, nextFallbackChildren, renderLanes);
+
+        var _primaryChildFragment = workInProgress.child;
+        _primaryChildFragment.memoizedState = mountSuspenseOffscreenState(renderLanes);
+        workInProgress.memoizedState = SUSPENDED_MARKER; // Since nothing actually suspended, there will nothing to ping this to
+        // get it started back up to attempt the next item. While in terms of
+        // priority this work has the same priority as this current render, it's
+        // not part of the same transition once the transition has committed. If
+        // it's sync, we still want to yield so that it can be painted.
+        // Conceptually, this is really the same as pinging. We can use any
+        // RetryLane even if it's the one currently rendering since we're leaving
+        // it behind on this node.
+
+        workInProgress.lanes = SomeRetryLane;
+        return _fallbackFragment;
       } else {
         return mountSuspensePrimaryChildren(workInProgress, nextPrimaryChildren);
       }
@@ -22107,6 +22728,11 @@
         pushHostRootContext(workInProgress);
         var root = workInProgress.stateNode;
 
+        {
+          var cache = current.memoizedState.cache;
+          pushCacheProvider(workInProgress, cache);
+        }
+
         resetHydrationState();
         break;
 
@@ -22272,6 +22898,16 @@
           // but I won't :)
           workInProgress.lanes = NoLanes;
           return updateOffscreenComponent(current, workInProgress, renderLanes);
+        }
+
+      case CacheComponent:
+        {
+          {
+            var _cache = current.memoizedState.cache;
+            pushCacheProvider(workInProgress, _cache);
+          }
+
+          break;
         }
     }
 
@@ -22468,6 +23104,19 @@
         {
           return updateOffscreenComponent(current, workInProgress, renderLanes);
         }
+
+      case LegacyHiddenComponent:
+        {
+
+          break;
+        }
+
+      case CacheComponent:
+        {
+          {
+            return updateCacheComponent(current, workInProgress, renderLanes);
+          }
+        }
     }
 
     throw new Error("Unknown unit of work tag (" + workInProgress.tag + "). This error is likely caused by a bug in " + 'React. Please file an issue.');
@@ -22506,6 +23155,11 @@
 
       case HostRoot:
         {
+          {
+            var root = workInProgress.stateNode;
+            var cache = workInProgress.memoizedState.cache;
+            popCacheProvider(workInProgress);
+          }
 
           popHostContainer(workInProgress);
           popTopLevelContextObject(workInProgress);
@@ -22582,9 +23236,19 @@
       case LegacyHiddenComponent:
         popRenderLanes(workInProgress);
 
+        {
+          if (current !== null) {
+            popTransition(workInProgress);
+          }
+        }
+
         return null;
 
       case CacheComponent:
+        {
+          var _cache = workInProgress.memoizedState.cache;
+          popCacheProvider(workInProgress);
+        }
 
         return null;
 
@@ -22614,6 +23278,11 @@
 
       case HostRoot:
         {
+          {
+            var root = interruptedWork.stateNode;
+            var cache = interruptedWork.memoizedState.cache;
+            popCacheProvider(interruptedWork);
+          }
 
           popHostContainer(interruptedWork);
           popTopLevelContextObject(interruptedWork);
@@ -22647,6 +23316,20 @@
       case OffscreenComponent:
       case LegacyHiddenComponent:
         popRenderLanes(interruptedWork);
+
+        {
+          if (current !== null) {
+            popTransition(interruptedWork);
+          }
+        }
+
+        break;
+
+      case CacheComponent:
+        {
+          var _cache2 = interruptedWork.memoizedState.cache;
+          popCacheProvider(interruptedWork);
+        }
 
         break;
     }
@@ -24719,6 +25402,95 @@
 
           break;
         }
+
+      case HostRoot:
+        {
+          {
+            var previousCache = null;
+
+            if (finishedWork.alternate !== null) {
+              previousCache = finishedWork.alternate.memoizedState.cache;
+            }
+
+            var nextCache = finishedWork.memoizedState.cache; // Retain/release the root cache.
+            // Note that on initial mount, previousCache and nextCache will be the same
+            // and this retain won't occur. To counter this, we instead retain the HostRoot's
+            // initial cache when creating the root itself (see createFiberRoot() in
+            // ReactFiberRoot.js). Subsequent updates that change the cache are reflected
+            // here, such that previous/next caches are retained correctly.
+
+            if (nextCache !== previousCache) {
+              retainCache(nextCache);
+
+              if (previousCache != null) {
+                releaseCache(previousCache);
+              }
+            }
+          }
+
+          break;
+        }
+
+      case LegacyHiddenComponent:
+      case OffscreenComponent:
+        {
+          {
+            var _previousCache = null;
+
+            if (finishedWork.alternate !== null && finishedWork.alternate.memoizedState !== null && finishedWork.alternate.memoizedState.cachePool !== null) {
+              _previousCache = finishedWork.alternate.memoizedState.cachePool.pool;
+            }
+
+            var _nextCache = null;
+
+            if (finishedWork.memoizedState !== null && finishedWork.memoizedState.cachePool !== null) {
+              _nextCache = finishedWork.memoizedState.cachePool.pool;
+            } // Retain/release the cache used for pending (suspended) nodes.
+            // Note that this is only reached in the non-suspended/visible case:
+            // when the content is suspended/hidden, the retain/release occurs
+            // via the parent Suspense component (see case above).
+
+
+            if (_nextCache !== _previousCache) {
+              if (_nextCache != null) {
+                retainCache(_nextCache);
+              }
+
+              if (_previousCache != null) {
+                releaseCache(_previousCache);
+              }
+            }
+          }
+
+          break;
+        }
+
+      case CacheComponent:
+        {
+          {
+            var _previousCache2 = null;
+
+            if (finishedWork.alternate !== null) {
+              _previousCache2 = finishedWork.alternate.memoizedState.cache;
+            }
+
+            var _nextCache2 = finishedWork.memoizedState.cache; // Retain/release the cache. In theory the cache component
+            // could be "borrowing" a cache instance owned by some parent,
+            // in which case we could avoid retaining/releasing. But it
+            // is non-trivial to determine when that is the case, so we
+            // always retain/release.
+
+            if (_nextCache2 !== _previousCache2) {
+              retainCache(_nextCache2);
+
+              if (_previousCache2 != null) {
+                releaseCache(_previousCache2);
+              }
+            }
+          }
+
+          break;
+        }
     }
   }
 
@@ -24885,6 +25657,46 @@
             recordPassiveEffectDuration(current);
           } else {
             commitHookEffectListUnmount(Passive$1, current, nearestMountedAncestor);
+          }
+
+          break;
+        }
+      // TODO: run passive unmount effects when unmounting a root.
+      // Because passive unmount effects are not currently run,
+      // the cache instance owned by the root will never be freed.
+      // When effects are run, the cache should be freed here:
+      // case HostRoot: {
+      //   if (enableCache) {
+      //     const cache = current.memoizedState.cache;
+      //     releaseCache(cache);
+      //   }
+      //   break;
+      // }
+
+      case LegacyHiddenComponent:
+      case OffscreenComponent:
+        {
+          {
+            if (current.memoizedState !== null && current.memoizedState.cachePool !== null) {
+              var cache = current.memoizedState.cachePool.pool; // Retain/release the cache used for pending (suspended) nodes.
+              // Note that this is only reached in the non-suspended/visible case:
+              // when the content is suspended/hidden, the retain/release occurs
+              // via the parent Suspense component (see case above).
+
+              if (cache != null) {
+                retainCache(cache);
+              }
+            }
+          }
+
+          break;
+        }
+
+      case CacheComponent:
+        {
+          {
+            var _cache = current.memoizedState.cache;
+            releaseCache(_cache);
           }
 
           break;
@@ -25159,6 +25971,7 @@
   var rootWithPendingPassiveEffects = null;
   var pendingPassiveEffectsLanes = NoLanes;
   var pendingPassiveProfilerEffects = [];
+  var pendingPassiveEffectsRemainingLanes = NoLanes; // Use these to prevent an infinite loop of nested updates
 
   var NESTED_UPDATE_LIMIT = 50;
   var nestedUpdateCount = 0;
@@ -25529,7 +26342,7 @@
           break;
       }
 
-      newCallbackNode = scheduleCallback$1(schedulerPriorityLevel, performConcurrentWorkOnRoot.bind(null, root));
+      newCallbackNode = scheduleCallback$2(schedulerPriorityLevel, performConcurrentWorkOnRoot.bind(null, root));
     }
 
     root.callbackPriority = newCallbackPriority;
@@ -25931,7 +26744,6 @@
       return null;
     }
 
-    // 初始化dispatch
     var exitStatus = renderRootSync(root, lanes);
 
     if (root.tag !== LegacyRoot && exitStatus === RootErrored) {
@@ -26250,7 +27062,6 @@
   function renderRootSync(root, lanes) {
     var prevExecutionContext = executionContext;
     executionContext |= RenderContext;
-    // 初始化dispatcher
     var prevDispatcher = pushDispatcher(); // If the root or lanes have changed, throw out the existing stack
     // and prepare a fresh one. Otherwise we'll continue where we left off.
 
@@ -26605,7 +27416,8 @@
     if ((finishedWork.subtreeFlags & PassiveMask) !== NoFlags || (finishedWork.flags & PassiveMask) !== NoFlags) {
       if (!rootDoesHavePassiveEffects) {
         rootDoesHavePassiveEffects = true;
-        scheduleCallback$1(NormalPriority, function () {
+        pendingPassiveEffectsRemainingLanes = remainingLanes;
+        scheduleCallback$2(NormalPriority, function () {
           flushPassiveEffects(); // This render triggered passive effects: release the root cache pool
           // *after* passive effects fire to avoid freeing a cache pool that may
           // be referenced by a node in the tree (HostRoot, Cache boundary etc)
@@ -26692,6 +27504,10 @@
       rootDoesHavePassiveEffects = false;
       rootWithPendingPassiveEffects = root;
       pendingPassiveEffectsLanes = lanes;
+    } else {
+      // There were no passive effects, so we can immediately release the cache
+      // pool for this render.
+      releaseRootPooledCache(root, remainingLanes);
     } // Read this again, since an effect might have updated it
 
 
@@ -26794,6 +27610,23 @@
     return null;
   }
 
+  function releaseRootPooledCache(root, remainingLanes) {
+    {
+      var pooledCacheLanes = root.pooledCacheLanes &= remainingLanes;
+
+      if (pooledCacheLanes === NoLanes) {
+        // None of the remaining work relies on the cache pool. Clear it so
+        // subsequent requests get a new cache
+        var pooledCache = root.pooledCache;
+
+        if (pooledCache != null) {
+          root.pooledCache = null;
+          releaseCache(pooledCache);
+        }
+      }
+    }
+  }
+
   function flushPassiveEffects() {
     // Returns whether passive effects were flushed.
     // TODO: Combine this check with the one in flushPassiveEFfectsImpl. We should
@@ -26802,6 +27635,14 @@
     // `Scheduler.runWithPriority`, which accepts a function. But now we track the
     // priority within React itself, so we can mutate the variable directly.
     if (rootWithPendingPassiveEffects !== null) {
+      // Cache the root since rootWithPendingPassiveEffects is cleared in
+      // flushPassiveEffectsImpl
+      var root = rootWithPendingPassiveEffects; // Cache and clear the remaining lanes flag; it must be reset since this
+      // method can be called from various places, not always from commitRoot
+      // where the remaining lanes are known
+
+      var remainingLanes = pendingPassiveEffectsRemainingLanes;
+      pendingPassiveEffectsRemainingLanes = NoLanes;
       var renderPriority = lanesToEventPriority(pendingPassiveEffectsLanes);
       var priority = lowerEventPriority(DefaultEventPriority, renderPriority);
       var prevTransition = ReactCurrentBatchConfig$3.transition;
@@ -26814,6 +27655,10 @@
       } finally {
         setCurrentUpdatePriority(previousPriority);
         ReactCurrentBatchConfig$3.transition = prevTransition; // Once passive effects have run for the tree - giving components a
+        // chance to retain cache instances they use - release the pooled
+        // cache at the root (if there is one)
+
+        releaseRootPooledCache(root, remainingLanes);
       }
     }
 
@@ -26825,7 +27670,7 @@
 
       if (!rootDoesHavePassiveEffects) {
         rootDoesHavePassiveEffects = true;
-        scheduleCallback$1(NormalPriority, function () {
+        scheduleCallback$2(NormalPriority, function () {
           flushPassiveEffects();
           return null;
         });
@@ -27328,7 +28173,7 @@
   }
   var fakeActCallbackNode = {};
 
-  function scheduleCallback$1(priorityLevel, callback) {
+  function scheduleCallback$2(priorityLevel, callback) {
     {
       // If we're currently inside an `act` scope, bypass Scheduler and push to
       // the `act` queue instead.
@@ -28172,6 +29017,9 @@
         // eslint-disable-next-line no-fallthrough
 
         case REACT_CACHE_TYPE:
+          {
+            return createFiberFromCache(pendingProps, mode, lanes, key);
+          }
 
         // eslint-disable-next-line no-fallthrough
 
@@ -28312,6 +29160,12 @@
     fiber.stateNode = primaryChildInstance;
     return fiber;
   }
+  function createFiberFromCache(pendingProps, mode, lanes, key) {
+    var fiber = createFiber(CacheComponent, pendingProps, key, mode);
+    fiber.elementType = REACT_CACHE_TYPE;
+    fiber.lanes = lanes;
+    return fiber;
+  }
   function createFiberFromText(content, mode, lanes) {
     var fiber = createFiber(HostText, content, null, mode);
     fiber.lanes = lanes;
@@ -28415,6 +29269,11 @@
     this.onRecoverableError = onRecoverableError;
 
     {
+      this.pooledCache = null;
+      this.pooledCacheLanes = NoLanes;
+    }
+
+    {
       this.mutableSourceEagerHydrationData = null;
     }
 
@@ -28459,21 +29318,39 @@
     uninitializedFiber.stateNode = root;
 
     {
-      var _initialState = {
+      var initialCache = createCache();
+      retainCache(initialCache); // The pooledCache is a fresh cache instance that is used temporarily
+      // for newly mounted boundaries during a render. In general, the
+      // pooledCache is always cleared from the root at the end of a render:
+      // it is either released when render commits, or moved to an Offscreen
+      // component if rendering suspends. Because the lifetime of the pooled
+      // cache is distinct from the main memoizedState.cache, it must be
+      // retained separately.
+
+      root.pooledCache = initialCache;
+      retainCache(initialCache);
+      var initialState = {
         element: initialChildren,
         isDehydrated: hydrate,
-        cache: null,
-        // not enabled yet
+        cache: initialCache,
         transitions: null
       };
-      uninitializedFiber.memoizedState = _initialState;
+      uninitializedFiber.memoizedState = initialState;
     }
 
     initializeUpdateQueue(uninitializedFiber);
     return root;
   }
 
-  var ReactVersion = '18.0.0-fc46dba67-20220329';
+  // TODO: this is special because it gets imported during build.
+  //
+  // TODO: 18.0.0 has not been released to NPM;
+  // It exists as a placeholder so that DevTools can support work tag changes between releases.
+  // When we next publish a release, update the matching TODO in backend/renderer.js
+  // TODO: This module is used both by the release scripts and to expose a version
+  // at runtime. We should instead inject the version number as part of the build
+  // process, and use the ReactVersions.js module as the single source of truth.
+  var ReactVersion = '18.0.0';
 
   function createPortal(children, containerInfo, // TODO: figure out the API for cross-renderer implementation.
   implementation) {
@@ -29412,8 +30289,6 @@
     return legacyRenderSubtreeIntoContainer(null, element, container, true, callback);
   }
   function render(element, container, callback) {
-    console.log('render called')
-    debugger;
     {
       error('ReactDOM.render is no longer supported in React 18. Use createRoot ' + 'instead. Until you switch to the new API, your app will behave as ' + "if it's running React 17. Learn " + 'more: https://reactjs.org/link/switch-to-createroot');
     }
@@ -29602,6 +30477,7 @@
   exports.unmountComponentAtNode = unmountComponentAtNode;
   exports.unstable_batchedUpdates = batchedUpdates$1;
   exports.unstable_renderSubtreeIntoContainer = renderSubtreeIntoContainer;
+  exports.unstable_runWithPriority = runWithPriority;
   exports.version = ReactVersion;
 
 })));
