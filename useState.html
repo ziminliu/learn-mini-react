@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Hello React!</title>
+    <script
+      type="text/javascript"
+      src="./react18.0.0/react.development.js"
+    ></script>
+    <script
+      type="text/javascript"
+      src="./react18.0.0/react-dom.development.js"
+    ></script>
+    <script type="text/javascript" src="./babel.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+  <script type="text/babel">
+    const App = () => {
+      debugger;
+      const [count, setCount] = React.useState(0);
+      const [count1, setCount1] = React.useState(100);
+      return (
+        <div>
+          <div>{count}</div>
+          <div>{count1}</div>
+          <button onClick={() => setCount(count + 1)}>count +1</button>
+          <button onClick={() => setCount1(count + 1)}>count1 +1</button>
+        </div>
+      );
+    };
+    console.log("App", App);
+    console.log("App Element", <App />);
+    const container = document.getElementById("root");
+    ReactDOM.render(<App />, container);
+  </script>
+</html>

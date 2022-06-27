@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Hello React!</title>
+    <script
+      type="text/javascript"
+      src="./react18.0.0/react.development.js"
+    ></script>
+    <script
+      type="text/javascript"
+      src="./react18.0.0/react-dom.development.js"
+    ></script>
+    <script type="text/javascript" src="./babel.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+  <script type="text/babel">
+    function List() {
+      return (
+        <ul>
+          <li key="0">0</li>
+          <li key="1">1</li>
+          <li key="2">2</li>
+          <li key="3">3</li>
+        </ul>
+      );
+    }
+    const container = document.getElementById("root");
+    ReactDOM.render(<List />, container);
+  </script>
+</html>

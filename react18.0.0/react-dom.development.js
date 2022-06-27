@@ -5299,10 +5299,10 @@
   /*                       */
   524288;
   var TransitionLane15 =
-  /*                       */
+  /*  100000000000000000000                     */
   1048576;
   var TransitionLane16 =
-  /*                       */
+  /*  1000000000000000000000                    */
   2097152;
   var RetryLanes =
   /*                            */
@@ -12719,7 +12719,9 @@
     return update;
   }
   function enqueueUpdate(fiber, update, lane) {
+    // 当前fiber 的 待更新任务队列
     var updateQueue = fiber.updateQueue;
+    console.log(updateQueue,'updateQueue')
 
     if (updateQueue === null) {
       // Only occurs if the fiber has been unmounted.
@@ -13289,8 +13291,10 @@
     enqueueSetState: function (inst, payload, callback) {
       var fiber = get(inst);
       var eventTime = requestEventTime();
+      //  计算本次任务优先级
       var lane = requestUpdateLane(fiber);
       var update = createUpdate(eventTime, lane);
+      // console.log(payload,'payload')
       update.payload = payload;
 
       if (callback !== undefined && callback !== null) {
@@ -19636,7 +19640,7 @@
     // to the current tree provider fiber is just as fast and less error-prone.
     // Ideally we would have a special version of the work loop only
     // for hydration.
-
+    console.log(current, workInProgress,'completeWork')
     popTreeContext(workInProgress);
 
     switch (workInProgress.tag) {
@@ -22915,6 +22919,7 @@
   }
 
   function beginWork(current, workInProgress, renderLanes) {
+    console.log(current, workInProgress,'beginwork')
     {
       if (workInProgress._debugNeedsRemount && current !== null) {
         // This will restart the begin phase with a new fiber.

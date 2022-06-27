@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Hello React!</title>
+    <script
+      type="text/javascript"
+      src="./react18.0.0/react.development.js"
+    ></script>
+    <script
+      type="text/javascript"
+      src="./react18.0.0/react-dom.development.js"
+    ></script>
+    <script type="text/javascript" src="./babel.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+  <script type="text/babel">
+    const App = () => {
+      return (
+        <div>
+          i am
+          <span>KaSong</span>
+        </div>
+      );
+    };
+    const container = document.getElementById("root");
+    ReactDOM.render(<App />, container);
+  </script>
+</html>

@@ -19,24 +19,7 @@
   </body>
 
   <script type="text/babel">
-    // const App = () => {
-    //   const [clickTimes, setClickTimes] = React.useState(0);
-    //   const handleClick = () => {
-    //     // ReactDOM.flushSync(() => {
-    //     //   setClickTimes(clickTimes + 1);
-    //     // });
-    //     setTimeout(() => {
-    //       setClickTimes((clickTimes) => clickTimes + 1);
-    //     });
-    //     console.log(clickTimes, "clickTimes");
-    //   };
-    //   return (
-    //     <div>
-    //       <h1> {clickTimes}</h1>
-    //       <button onClick={handleClick}>+1</button>
-    //     </div>
-    //   );
-    // };
+    console.log(App, "App");
     console.log("react version", React.version);
     class SetStatePage extends React.Component {
       constructor(props) {
@@ -46,6 +29,9 @@
         };
       }
       componentDidMount() {
+        // this.setState((preState) => ({
+        //   count: preState.count + 1,
+        // }));
         document.getElementById("host").addEventListener(
           "click",
           //// 即react-reconciler/src/ReactFiberWorkLoop.js batchedUpdates
@@ -57,18 +43,17 @@
 
       changeCount = () => {
         const { count } = this.state;
-
         // ReactDOM.flushSync(() => {
-        this.setState({
-          count: count + 1,
-        });
+        debugger;
+        this.setState((preState) => ({
+          count: preState.count + 1,
+        }));
+        console.log("setState 1", this.state); //sy-log
+        this.setState((preState) => ({
+          count: preState.count + 1,
+        }));
         // });
-
-        // this.setState({
-        //   count: count + 2,
-        // });
-
-        console.log("改变count", this.state); //sy-log
+        console.log("setState 2", this.state); //sy-log
       };
 
       changeCountWithSetTimeout = () => {
@@ -98,8 +83,9 @@
     const container = document.getElementById("root");
     // debugger;
     // console.log(React.createElement(App, null), "app");
-    // const root = ReactDOM.createRoot(container); // createRoot(container!) if you use TypeScript
-    // root.render(<App />);
+    // legacy
     ReactDOM.render(<SetStatePage />, container);
+    // concurrent
+    // const root = ReactDOM.createRoot(container).render(<App />);
   </script>
 </html>
